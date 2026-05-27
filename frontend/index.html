@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Chatbot Tester</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; padding: 20px; margin: 0; height: 100vh; box-sizing: border-box; }
+        .chat-container { width: 100%; max-width: 600px; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); display: flex; flex-direction: column; overflow: hidden; }
+        .chat-header { background: #0056b3; color: white; padding: 15px; text-align: center; font-size: 1.2rem; font-weight: bold; }
+        .chat-messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #fafafa; }
+        .message { max-width: 80%; padding: 10px 14px; border-radius: 18px; line-height: 1.4; word-wrap: break-word; }
+        .message.user { align-self: flex-end; background: #0056b3; color: white; border-bottom-right-radius: 2px; }
+        .message.bot { align-self: flex-start; background: #e0e0e0; color: #333; border-bottom-left-radius: 2px; }
+        .error { color: red; font-size: 0.9em; text-align: center; }
+        .chat-input-area { display: flex; border-top: 1px solid #ddd; padding: 10px; background: white; }
+        .chat-input-area input { flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; outline: none; }
+        .chat-input-area input:focus { border-color: #0056b3; }
+        .chat-input-area button { margin-left: 10px; padding: 10px 20px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; transition: background 0.2s; }
+        .chat-input-area button:hover { background: #004494; }
+        .chat-input-area button:disabled { background: #999; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-header">Enterprise Chatbot</div>
+    <div class="chat-messages" id="messages">
+        <div class="message bot">Hello! Ask me anything about the platform.</div>
+    </div>
+    <div class="chat-input-area">
+        <input type="text" id="queryInput" placeholder="Type your question..." autocomplete="off">
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('queryInput');
+    const sendBtn = document.getElementById('sendBtn');
+    
+    // Generate an anonId once per session
+    const anonId = 'guest-' + Math.random().toString(36).substr(2, 9);
+
+    inputEl.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') sendMessage();
+    });
+
+    async function sendMessage() {
+        const query = inputEl.value.trim();
+        if (!query) return;
+
+        // Add user message
+        addMessage(query, 'user');
+        inputEl.value = '';
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+
+        // Placeholder for bot response
+        const botMsgEl = addMessage('', 'bot');
+
+        try {
+            const response = await fetch('http://localhost:8080/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-session-id': anonId
+                },
+                body: JSON.stringify({
+                    userQuery: query,
+                    anonId: anonId
+                })
+            });
+
+            if (!response.ok) {
+                if (response.status === 429) {
+                    botMsgEl.textContent += " [Rate limit reached. Please try again tomorrow.]";
+                } else {
+                    botMsgEl.textContent += ` [Error: ${response.statusText}]`;
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let done = false;
+            let buffer = '';
+
+            while (!done) {
+                const { value, done: readerDone } = await reader.read();
+                done = readerDone;
+                if (value) {
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep the last incomplete line in the buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const dataStr = line.substring(6).trim();
+                            try {
+                                const parsed = JSON.parse(dataStr);
+                                if (parsed.token) {
+                                    botMsgEl.textContent += parsed.token;
+                                    messagesEl.scrollTop = messagesEl.scrollHeight;
+                                }
+                            } catch (e) {
+                                console.warn('JSON parse error on SSE data', e);
+                            }
+                        } else if (line.startsWith('event: error')) {
+                            botMsgEl.textContent += '\n[An error occurred processing this request.]';
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(err);
+            const errEl = document.createElement('div');
+            errEl.className = 'error';
+            errEl.textContent = 'Failed to connect to the chatbot server. Is it running?';
+            messagesEl.appendChild(errEl);
+        } finally {
+            inputEl.disabled = false;
+            sendBtn.disabled = false;
+            inputEl.focus();
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+    }
+
+    function addMessage(text, sender) {
+        const msgEl = document.createElement('div');
+        msgEl.className = `message ${sender}`;
+        msgEl.textContent = text;
+        messagesEl.appendChild(msgEl);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return msgEl;
+    }
+</script>
+</body>
+</html>
