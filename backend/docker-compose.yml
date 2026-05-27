@@ -1,0 +1,59 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.10.1
+    container_name: chatbot-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis/redis-stack-server:7.2.0-v8
+    container_name: chatbot-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.0
+    container_name: chatbot-mysql
+    restart: unless-stopped
+    command:
+      - "mysqld"
+      - "--innodb-buffer-pool-size=64M"
+      - "--innodb-log-buffer-size=8M"
+      - "--max-connections=30"
+      - "--table-open-cache=200"
+      - "--tmp-table-size=16M"
+      - "--max-heap-table-size=16M"
+      - "--performance-schema=OFF"
+      - "--default-authentication-plugin=mysql_native_password"
+    environment:
+      MYSQL_DATABASE: mydb
+      MYSQL_USER: myuser
+      MYSQL_PASSWORD: mypassword
+      MYSQL_ROOT_PASSWORD: rootpassword
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$$MYSQL_USER -p$$MYSQL_PASSWORD || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qdrant_data:
+  redis_data:
+  mysql_data:
